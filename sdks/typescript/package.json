@@ -1,0 +1,46 @@
+{
+  "name": "@AresFeed/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for AresFeed",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/types/index.d.ts",
+  "module": "./dist/esm/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && tsc -p tsconfig.types.json && node ./scripts/finalize.mjs",
+    "lint": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "AresFeed",
+    "agent",
+    "ai",
+    "sdk",
+    "api"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FIXFIBER/AresFeed.git",
+    "directory": "sdks/typescript"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

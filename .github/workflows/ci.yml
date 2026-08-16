@@ -1,0 +1,223 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least-privilege default. Override per-job only if a step needs to write.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: AresFeed
+          POSTGRES_PASSWORD: AresFeed
+          POSTGRES_DB: AresFeed_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install migrate
+        run: |
+          curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.0/migrate.linux-amd64.tar.gz | tar xz
+          sudo mv migrate /usr/local/bin/
+
+      - name: Run migrations
+        run: migrate -path migrations -database "$DATABASE_URL" up
+        env:
+          DATABASE_URL: postgres://AresFeed:AresFeed@localhost:5432/AresFeed_test?sslmode=disable
+
+      - name: Vet
+        run: go vet ./internal/... ./cmd/... ./tests/...
+
+      - name: Test
+        # The database-backed handler package is intentionally serialized and
+        # now runs slightly longer than Go's 10-minute per-package default on
+        # hosted runners. Keep the race suite deterministic while giving the
+        # integration-heavy package a bounded, explicit ceiling.
+        run: go test ./internal/... ./tests/... -race -count=1 -p 1 -timeout 20m
+        env:
+          DATABASE_URL: postgres://AresFeed:AresFeed@localhost:5432/AresFeed_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-secret
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+
+      - name: Go vet
+        run: go vet ./internal/... ./cmd/... ./tests/...
+
+  typescript-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdks/typescript/package-lock.json
+
+      - name: Install TypeScript SDK dependencies
+        working-directory: sdks/typescript
+        run: npm ci
+
+      - name: Type-check, build, and test TypeScript SDK contracts
+        working-directory: sdks/typescript
+        run: |
+          npm run lint
+          npm test
+
+      - name: Smoke-pack declared TypeScript SDK entry points
+        working-directory: sdks/typescript
+        run: npm pack --dry-run
+
+  python-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python SDK
+        run: python -m pip install ./sdks/python
+
+      - name: Test Python SDK contracts and error behavior
+        run: python -m unittest discover -s sdks/python/tests -v
+
+      - name: Build and smoke-import Python SDK wheel
+        run: |
+          python -m pip wheel ./sdks/python --no-deps --wheel-dir /tmp/AresFeed-python-dist
+          python -m pip install --force-reinstall --no-deps /tmp/AresFeed-python-dist/*.whl
+          python -c "from AresFeed import AresFeedClient, SDK_CONTRACT_VERSION; assert SDK_CONTRACT_VERSION == 'v1'; assert AresFeedClient"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test, lint, typescript-sdk, python-sdk]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+
+      - name: Check MIT license consistency
+        run: ./scripts/check-license.sh
+
+      - name: Check release metadata
+        run: ./scripts/check-release-metadata.sh
+
+      - name: Check Docker build contexts
+        run: ./scripts/check-docker-context.sh
+
+      - name: Check Docker health configuration
+        run: ./scripts/check-compose-health.sh
+
+      - name: Check production Compose configuration
+        run: ./scripts/check-production-compose.sh
+
+      - name: Build all services
+        run: go build ./cmd/...
+
+  web-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: TypeScript check
+        working-directory: web
+        run: npx tsc --noEmit
+
+      - name: Unit tests (vitest)
+        working-directory: web
+        run: npm test
+
+      - name: ESLint
+        working-directory: web
+        # `eslint.config.mjs` deliberately keeps stylistic / preference
+        # rules at warning. CI fails on errors only; warnings are
+        # surfaced for review and can be tightened to error in
+        # follow-up PRs.
+        run: npx eslint . --max-warnings 9999
+
+      - name: Next.js build
+        # tsc passes don't guarantee `next build` passes (page
+        # convention errors, RSC boundary errors, static-prerender
+        # errors). Build here so those land at PR time, not deploy
+        # time.
+        working-directory: web
+        run: npm run build
+        env:
+          # Build-time fetch in `app/page.tsx` would 502 against a
+          # missing API; stub URL keeps the build deterministic. The
+          # SSR-health step below restarts with a real stub server.
+          API_URL: http://127.0.0.1:1
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:1
+
+      - name: SSR content health
+        # Starts `next start` with a stub backend and asserts each
+        # SEO-critical route renders <h1>, meaningful <main> content,
+        # and the expected headline copy. Catches regressions like
+        # an accidental `mounted` gate or unguarded `useSearchParams`
+        # gutting SSR HTML — the class of bug PR #113 and #134 fixed.
+        working-directory: web
+        run: node scripts/check-ssr-health.mjs
+
+  production-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate and boot production Compose from empty volumes
+        run: ./scripts/smoke-production-compose.sh

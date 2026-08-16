@@ -1,0 +1,32 @@
+# Version-control and editor metadata
+.git
+.github
+.idea
+.vscode
+.DS_Store
+
+# Cloud/file-sync conflict copies (for example, "source 2.go")
+**/* [0-9].*
+
+# Local configuration and logs
+.env
+.env.*
+*.log
+
+# Generated build and test output
+bin
+coverage
+coverage.*
+*.out
+*.test
+tmp
+
+# Dependency / framework build caches (rebuilt fresh inside the image)
+node_modules
+web/node_modules
+web/.next
+**/node_modules
+**/.next
+
+# Uploads (runtime data, not part of the image)
+uploads

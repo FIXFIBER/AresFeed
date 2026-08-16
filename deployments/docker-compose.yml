@@ -1,0 +1,141 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: AresFeed
+      POSTGRES_PASSWORD: AresFeed
+      POSTGRES_DB: AresFeed
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U AresFeed"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    volumes:
+      - ../migrations:/migrations:ro
+    command:
+      [
+        "-path", "/migrations",
+        "-database", "postgres://AresFeed:AresFeed@postgres:5432/AresFeed?sslmode=disable",
+        "up",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bootstrap:
+    build:
+      context: ../
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: bootstrap
+    environment:
+      DATABASE_URL: postgres://AresFeed:AresFeed@postgres:5432/AresFeed?sslmode=disable
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ../
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://AresFeed:AresFeed@postgres:5432/AresFeed?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-in-production
+      ALLOWED_ORIGINS: http://localhost:3000
+      SITE_URL: http://localhost:3000
+      FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
+      BYOK_ENABLED: ${BYOK_ENABLED:-}
+      BYOK_KEK: ${BYOK_KEK:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      ACS_CONNECTION_STRING: ${ACS_CONNECTION_STRING:-}
+      ACS_EMAIL_DOMAIN: ${ACS_EMAIL_DOMAIN:-}
+      SPORTS_FOOTBALL_DATA_KEY: ${SPORTS_FOOTBALL_DATA_KEY:-}
+      HEALTHCHECK_PORT: "8080"
+      ENVIRONMENT: development
+      LOG_LEVEL: debug
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+
+  gateway:
+    build:
+      context: ../
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: gateway
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://AresFeed:AresFeed@postgres:5432/AresFeed?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      GATEWAY_PORT: "8081"
+      HEALTHCHECK_PORT: "8081"
+      CORE_API_URL: http://api:8080
+      ENVIRONMENT: development
+      LOG_LEVEL: debug
+    depends_on:
+      api:
+        condition: service_started
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        API_URL: http://api:8080
+        NEXT_PUBLIC_CLARITY_PROJECT_ID: ${NEXT_PUBLIC_CLARITY_PROJECT_ID:-}
+        NEXT_PUBLIC_GOOGLE_ADS_ID: ${NEXT_PUBLIC_GOOGLE_ADS_ID:-}
+        NEXT_PUBLIC_ADSENSE_CLIENT: ${NEXT_PUBLIC_ADSENSE_CLIENT:-}
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: http://api:8080
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
