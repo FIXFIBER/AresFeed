@@ -80,3 +80,19 @@ communities_fixed.png
 communities_mobile_375.png
 communities_mobile_top.png
 bookmarks_live.png
+
+# ---- Added for safe local editing / re-deploys ----
+# Catch-all env files (secrets)
+.env.*
+*.local
+
+# Keys / certificates
+*.pem
+*.key
+secrets/
+
+# Render + build caches
+.render/
+.cache/
+*.tsbuildinfo
+build/
