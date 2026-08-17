@@ -89,6 +89,16 @@ export const metadata: Metadata = {
     },
   },
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
+  // Subtle author "watermark" — idris adeleke. These render as
+  // <meta> tags in <head> (invisible on the page, present in source).
+  authors: [{ name: 'idris adeleke' }],
+  creator: 'idris adeleke',
+  publisher: 'idris adeleke',
+  generator: 'AresFeed — by idris adeleke',
+  other: {
+    'x-built-by': 'idris',
+    'x-author': 'idris adeleke',
+  },
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

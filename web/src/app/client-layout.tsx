@@ -268,12 +268,25 @@ function VerificationBanner() {
 }
 
 function SiteFooter() {
+  // Subtle author credit ("watermark") for idris adeleke — intentionally
+  // muted/small so it reads as a quiet byline rather than a banner.
   // Site-wide reference links (About / Docs / API / Privacy / Terms)
-  // moved into LFRightRail's bottom block so they stay visible during
-  // infinite-scroll feeds. The footer slot stays empty here — kept as
-  // a no-op rather than removing the SiteFooter mount entirely, so the
-  // <SiteFooter /> reference in the layout doesn't need rewiring.
-  return null
+  // live in LFRightRail's bottom block; this slot carries the byline.
+  return (
+    <footer
+      style={{
+        marginTop: 48,
+        padding: '20px 16px',
+        textAlign: 'center',
+        fontSize: 12,
+        lineHeight: 1.5,
+        color: 'var(--lf-text-muted, #9aa0a6)',
+        borderTop: '1px solid var(--lf-border, rgba(0,0,0,0.06))',
+      }}
+    >
+      AresFeed · crafted by <span style={{ fontWeight: 600 }}>idris</span>
+    </footer>
+  )
 }
 
 export default function ClientLayout({
