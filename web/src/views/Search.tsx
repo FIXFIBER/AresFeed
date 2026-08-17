@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import { mapPost } from '../api/mappers'
 import type { PostView } from '../api/types'
 import { LFSearchInput, LFFilterChips, LFPostCard } from '../components/lf'
+import { LFPersonRow, type Person } from '../components/lf/LFPersonRow'
 
 function FilterRowLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -88,6 +89,14 @@ export default function Search() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const activeFilterCount = [period, authorType, postType, community].filter(Boolean).length
 
+  // Result tab: posts vs people (user/agent search). Defaults from ?tab=.
+  const [resultTab, setResultTab] = useState<'posts' | 'people'>(
+    (searchParams.get('tab') as 'posts' | 'people') || 'posts',
+  )
+  const [people, setPeople] = useState<Person[]>([])
+  const [peopleLoading, setPeopleLoading] = useState(false)
+  const [peopleError, setPeopleError] = useState<string | null>(null)
+
   // Filter changes update the URL so a filtered search is
   // shareable / bookmarkable. Skip the no-op write when nothing
   // changed (avoids a router.replace per render).
@@ -130,6 +139,20 @@ export default function Search() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
   }, [query, searchMode, community, authorType, postType, period])
+
+  // People (user/agent) search — only runs when the People tab is active.
+  useEffect(() => {
+    if (!query || resultTab !== 'people') return
+    setPeopleLoading(true)
+    setPeopleError(null)
+    api
+      .getPeople({ q: query, limit: 25 })
+      .then((resp: any) => {
+        setPeople(Array.isArray(resp?.people) ? resp.people : [])
+      })
+      .catch((e: Error) => setPeopleError(e.message))
+      .finally(() => setPeopleLoading(false))
+  }, [query, resultTab])
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return
@@ -197,12 +220,28 @@ export default function Search() {
           value={inputValue}
           onChange={setInputValue}
           onSubmit={submitSearch}
-          placeholder="Search posts, contributors, communities…"
+          placeholder="Search posts, people, communities…"
           autoFocus={!query}
         />
       </div>
 
+      {/* Result-type tabs: Posts | People. People surfaces user/agent
+          search on every screen, including mobile. */}
       {query && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, marginBottom: 4 }}>
+          <LFFilterChips
+            mode="single"
+            value={resultTab}
+            onChange={(k) => setResultTab(k as 'posts' | 'people')}
+            options={[
+              { key: 'posts', label: 'Posts' },
+              { key: 'people', label: 'People' },
+            ]}
+          />
+        </div>
+      )}
+
+      {query && resultTab === 'posts' && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginTop: 16, marginBottom: 16, flexWrap: 'wrap' }}>
           <LFFilterChips
             mode="single"
@@ -229,9 +268,25 @@ export default function Search() {
         </div>
       )}
 
+      {query && resultTab === 'people' && (
+        <div
+          style={{
+            fontFamily: 'var(--lf-font-mono)',
+            fontSize: 11,
+            color: 'var(--lf-muted)',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            marginTop: 12,
+            marginBottom: 16,
+          }}
+        >
+          {peopleLoading ? 'Searching people…' : `${people.length} people`}
+        </div>
+      )}
+
       {/* Mobile-only disclosure for the filter rows below — hidden on
-          desktop via .lf-search-filters-toggle. */}
-      {query && (
+          desktop via .lf-search-filters-toggle. Only relevant to Posts. */}
+      {query && resultTab === 'posts' && (
         <button
           type="button"
           className="lf-search-filters-toggle"
@@ -259,7 +314,7 @@ export default function Search() {
           URL-sync effect picks up and propagates. A small "any"
           chip per row is the explicit clear; the trailing "Clear
           all" only appears when something is set. */}
-      {query && (
+      {query && resultTab === 'posts' && (
         <div className={'lf-search-filters' + (filtersOpen ? ' open' : '')}>
           <FilterChipRow
             label="When"
@@ -337,54 +392,87 @@ export default function Search() {
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {[...Array(5)].map((_, i) => (
-            <div key={i} style={{ padding: '20px 0', borderBottom: 'var(--lf-border-w) solid var(--lf-rule-soft)' }}>
-              <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                <div className="skeleton" style={{ width: 80, height: 12 }} />
-                <div className="skeleton skeleton-avatar" />
-                <div className="skeleton" style={{ width: 60, height: 12 }} />
-              </div>
-              <div className="skeleton skeleton-title" />
-              <div className="skeleton skeleton-text" style={{ width: '85%' }} />
+      {/* ---------------- POSTS RESULTS ---------------- */}
+      {resultTab === 'posts' && (
+        <>
+          {/* Loading skeleton */}
+          {loading && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} style={{ padding: '20px 0', borderBottom: 'var(--lf-border-w) solid var(--lf-rule-soft)' }}>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                    <div className="skeleton" style={{ width: 80, height: 12 }} />
+                    <div className="skeleton skeleton-avatar" />
+                    <div className="skeleton" style={{ width: 60, height: 12 }} />
+                  </div>
+                  <div className="skeleton skeleton-title" />
+                  <div className="skeleton skeleton-text" style={{ width: '85%' }} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div className="lf-empty" style={{ color: 'var(--lf-accent-2)' }}>
+              Search failed: {error}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loading && !error && query && posts.length === 0 && (
+            <div className="lf-empty">
+              No results found for &ldquo;{query}&rdquo;. Try a different search term.
+            </div>
+          )}
+
+          {/* Results */}
+          {!loading &&
+            posts.map((post) => (
+              <div key={post.id}>
+                {post.relevanceScore != null && post.relevanceScore > 0 && (
+                  <RelevanceBar score={post.relevanceScore} />
+                )}
+                <LFPostCard post={post} onVote={(_id, dir) => handleVote(post.id, dir)} />
+              </div>
+            ))}
+          {!loading && nextCursor && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+              <button type="button" className="lf-btn lf-btn-secondary" disabled={loadingMore} onClick={loadMore}>
+                {loadingMore ? 'Loading…' : 'Load more results'}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Error */}
-      {error && (
-        <div className="lf-empty" style={{ color: 'var(--lf-accent-2)' }}>
-          Search failed: {error}
-        </div>
+      {/* ---------------- PEOPLE RESULTS ---------------- */}
+      {resultTab === 'people' && (
+        <>
+          {peopleLoading && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="skeleton" style={{ height: 64, borderRadius: 16 }} />
+              ))}
+            </div>
+          )}
+          {peopleError && (
+            <div className="lf-empty" style={{ color: 'var(--lf-accent-2)' }}>
+              People search failed: {peopleError}
+            </div>
+          )}
+          {!peopleLoading && !peopleError && query && people.length === 0 && (
+            <div className="lf-empty">
+              No people found for &ldquo;{query}&rdquo;. Try a name or handle.
+            </div>
+          )}
+          {!peopleLoading &&
+            people.map((person) => (
+              <LFPersonRow key={person.id} person={person} />
+            ))}
+        </>
       )}
 
-      {/* Empty state */}
-      {!loading && !error && query && posts.length === 0 && (
-        <div className="lf-empty">
-          No results found for &ldquo;{query}&rdquo;. Try a different search term.
-        </div>
-      )}
-
-      {/* Results */}
-      {!loading &&
-        posts.map((post) => (
-          <div key={post.id}>
-            {post.relevanceScore != null && post.relevanceScore > 0 && (
-              <RelevanceBar score={post.relevanceScore} />
-            )}
-            <LFPostCard post={post} onVote={(_id, dir) => handleVote(post.id, dir)} />
-          </div>
-        ))}
-      {!loading && nextCursor && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
-          <button type="button" className="lf-btn lf-btn-secondary" disabled={loadingMore} onClick={loadMore}>
-            {loadingMore ? 'Loading…' : 'Load more results'}
-          </button>
-        </div>
-      )}
       </div>
 
     </div>
